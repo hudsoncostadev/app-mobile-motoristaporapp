@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Car, ChevronRight, LogOut, ShieldCheck, CircleHelp as HelpCircle, Pencil, Mail, X } from "lucide-react";
 import { colors, font, radius, spacing } from "../theme";
-import { api } from "../api";
+import { updateProfile } from "../db";
 import { useAuth } from "../auth";
 import { useToast } from "../toast";
 import { TAB_BAR_HEIGHT } from "../components/TabBar";
@@ -22,11 +22,8 @@ export default function Profile() {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await api<{ user: User }>("/profile", {
-        method: "PUT",
-        body: { name: name.trim(), vehicle: vehicle.trim() },
-      });
-      setUser(res.user);
+      await updateProfile(name.trim(), vehicle.trim());
+      setUser({ ...user!, name: name.trim(), vehicle: vehicle.trim() });
       setSheetOpen(false);
       show("Perfil atualizado");
     } catch {

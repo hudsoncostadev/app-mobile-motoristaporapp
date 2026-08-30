@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { api, saveToken, clearToken, loadToken, ApiError } from "./api";
+import { supabase } from "./supabase";
 import type { User } from "./types";
 
 type AuthState = {
@@ -15,59 +15,105 @@ type AuthState = {
 const AuthContext = createContext<AuthState>({} as AuthState);
 export const useAuth = () => useContext(AuthContext);
 
+async function fetchProfile(uid: string): Promise<User | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, name, email, picture, vehicle")
+    .eq("id", uid)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    user_id: data.id,
+    name: data.name,
+    email: data.email ?? "",
+    picture: data.picture,
+    vehicle: data.vehicle,
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   const bootstrap = useCallback(async () => {
-    try {
-      const token = await loadToken();
-      if (token) {
-        const res = await api<{ user: User }>("/auth/me");
-        setUser(res.user);
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user) {
+      const u = sessionData.session.user;
+      const profile = await fetchProfile(u.id);
+      if (profile) {
+        setUser(profile);
+      } else {
+        setUser({
+          user_id: u.id,
+          name: u.user_metadata?.name ?? u.email ?? "",
+          email: u.email ?? "",
+          picture: u.user_metadata?.picture ?? null,
+          vehicle: null,
+        });
       }
-    } catch {
-      await clearToken();
-      setUser(null);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     bootstrap();
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      (async () => {
+        if (session?.user) {
+          const profile = await fetchProfile(session.user.id);
+          if (profile) setUser(profile);
+          else
+            setUser({
+              user_id: session.user.id,
+              name: session.user.user_metadata?.name ?? session.user.email ?? "",
+              email: session.user.email ?? "",
+              picture: session.user.user_metadata?.picture ?? null,
+              vehicle: null,
+            });
+        } else {
+          setUser(null);
+        }
+      })();
+    });
+    return () => sub.subscription.unsubscribe();
   }, [bootstrap]);
 
   const loginEmail = useCallback(async (email: string, password: string) => {
-    const res = await api<{ session_token: string; user: User }>("/auth/login", {
-      method: "POST",
-      body: { email, password },
-      auth: false,
-    });
-    await saveToken(res.session_token);
-    setUser(res.user);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
   }, []);
 
   const register = useCallback(async (name: string, email: string, password: string) => {
-    const res = await api<{ session_token: string; user: User }>("/auth/register", {
-      method: "POST",
-      body: { name, email, password },
-      auth: false,
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name } },
     });
-    await saveToken(res.session_token);
-    setUser(res.user);
+    if (error) throw new Error(error.message);
+    if (data.user) {
+      const profile = await fetchProfile(data.user.id);
+      if (profile) setUser(profile);
+      else
+        setUser({
+          user_id: data.user.id,
+          name,
+          email,
+          picture: null,
+          vehicle: null,
+        });
+    }
   }, []);
 
   const refreshUser = useCallback(async () => {
-    const res = await api<{ user: User }>("/auth/me");
-    setUser(res.user);
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user) {
+      const profile = await fetchProfile(sessionData.session.user.id);
+      if (profile) setUser(profile);
+    }
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await api("/auth/logout", { method: "POST" });
-    } catch {}
-    await clearToken();
+    await supabase.auth.signOut();
     setUser(null);
   }, []);
 

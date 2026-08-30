@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { Wallet, CalendarDays, Car, Route as RouteIcon, Clock, TrendingDown } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL, formatHours } from "../theme";
-import { api } from "../api";
+import { getBalanceSummary } from "../db";
 import { useToast } from "../toast";
 import { TAB_BAR_HEIGHT } from "../components/TabBar";
 import type { BalanceSummary } from "../types";
@@ -13,7 +13,7 @@ export default function Balance() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api<BalanceSummary>("/balance/summary");
+      const res = await getBalanceSummary();
       setData(res);
     } catch {
       show("Erro ao carregar balanço", "error");

@@ -44,6 +44,7 @@ export type GoalData = {
   today_progress?: number;
   week_progress?: number;
   days_per_week?: number;
+  days_in_month?: number;
 };
 
 export type BalanceDay = { day_key: string; label: string; bruto: number; liquido: number };

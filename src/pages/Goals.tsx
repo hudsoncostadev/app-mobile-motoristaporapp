@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { CalendarRange, CalendarDays, Sun, X, Check } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL } from "../theme";
-import { api } from "../api";
+import { getGoal, saveGoal } from "../db";
 import { useToast } from "../toast";
 import { TAB_BAR_HEIGHT } from "../components/TabBar";
 import PrimaryButton from "../components/PrimaryButton";
@@ -21,7 +21,7 @@ export default function Goals() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api<GoalData>("/goals");
+      const res = await getGoal();
       setGoal(res);
     } catch {
       show("Erro ao carregar metas", "error");
@@ -48,10 +48,7 @@ export default function Goals() {
     }
     setSaving(true);
     try {
-      const res = await api<GoalData>("/goals", {
-        method: "POST",
-        body: { monthly_target: value, days_per_week: days },
-      });
+      const res = await saveGoal(value, days);
       setGoal(res);
       setSheetOpen(false);
       show("Meta salva!");

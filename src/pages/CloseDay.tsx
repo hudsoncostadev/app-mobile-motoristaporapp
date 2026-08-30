@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, ArrowLeft, Clock, Route as RouteIcon, Check } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL, formatTimer } from "../theme";
-import { api } from "../api";
+import { getToday, closeWorkday } from "../db";
 import { useToast } from "../toast";
 import PrimaryButton from "../components/PrimaryButton";
 
@@ -36,7 +36,7 @@ export default function CloseDay() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api<{ state: string; workday: any }>("/workday/today");
+        const res = await getToday();
         if (res.state !== "active" || !res.workday?.started_at) {
           show("Nenhum dia ativo", "error");
           navigate("/");
@@ -78,18 +78,11 @@ export default function CloseDay() {
         amount: num(earn[a] || ""),
         rides: Math.round(num(rides[a] || "")),
       }));
-      await api("/workday/close", {
-        method: "POST",
-        body: {
-          apps,
-          km: num(km),
-          expenses: {
-            abastecimento: num(abastecimento),
-            alimentacao: num(alimentacao),
-            manutencao: num(manutencao),
-            outros: num(outrosGasto),
-          },
-        },
+      await closeWorkday(apps, num(km), {
+        abastecimento: num(abastecimento),
+        alimentacao: num(alimentacao),
+        manutencao: num(manutencao),
+        outros: num(outrosGasto),
       });
       show("Dia encerrado com sucesso!");
       navigate("/");

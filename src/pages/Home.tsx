@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Play, Square, Car, Clock, Route as RouteIcon, CircleCheck as CheckCircle2, TrendingUp } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL, formatTimer, formatHours, todayLabel, greeting } from "../theme";
-import { api } from "../api";
+import { getToday, startWorkday, getGoal } from "../db";
 import { useAuth } from "../auth";
 import { useToast } from "../toast";
 import { TAB_BAR_HEIGHT } from "../components/TabBar";
@@ -24,10 +24,7 @@ export default function Home() {
 
   const load = useCallback(async () => {
     try {
-      const [t, g] = await Promise.all([
-        api<TodayResp>("/workday/today"),
-        api<GoalData>("/goals"),
-      ]);
+      const [t, g] = await Promise.all([getToday(), getGoal()]);
       setToday(t);
       setGoal(g);
     } catch {
@@ -55,7 +52,7 @@ export default function Home() {
   const startDay = async () => {
     setBusy(true);
     try {
-      const res = await api<TodayResp>("/workday/start", { method: "POST" });
+      const res = await startWorkday();
       setToday(res);
       show("Bom trabalho! Dia iniciado");
     } catch (e: any) {

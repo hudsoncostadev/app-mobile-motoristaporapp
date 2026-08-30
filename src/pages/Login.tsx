@@ -4,7 +4,7 @@ import { Mail, Lock, User as UserIcon } from "lucide-react";
 import { colors, font, radius, spacing } from "../theme";
 import { useAuth } from "../auth";
 import { useToast } from "../toast";
-import { ApiError } from "../api";
+
 import PrimaryButton from "../components/PrimaryButton";
 
 export default function Login() {
@@ -29,7 +29,7 @@ export default function Login() {
       else await register(name.trim(), email.trim(), password);
       navigate("/");
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "Não foi possível entrar";
+      const msg = e instanceof Error ? e.message : "Não foi possível entrar";
       show(msg, "error");
     } finally {
       setLoading(false);
