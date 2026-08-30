@@ -2,11 +2,13 @@ import React, { useState, useCallback, useEffect } from "react";
 import { Wallet, CalendarDays, Car, Route as RouteIcon, Clock, TrendingDown } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL, formatHours } from "../theme";
 import { getBalanceSummary } from "../db";
+import { useAuth } from "../auth";
 import { useToast } from "../toast";
 import { TAB_BAR_HEIGHT } from "../components/TabBar";
 import type { BalanceSummary } from "../types";
 
 export default function Balance() {
+  const { user } = useAuth();
   const { show } = useToast();
   const [data, setData] = useState<BalanceSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,8 +25,9 @@ export default function Balance() {
   }, [show]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (user) load();
+    else setLoading(false);
+  }, [user, load]);
 
   if (loading) {
     return (

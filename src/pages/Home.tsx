@@ -35,8 +35,9 @@ export default function Home() {
   }, [show]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (user) load();
+    else setLoading(false);
+  }, [user, load]);
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);

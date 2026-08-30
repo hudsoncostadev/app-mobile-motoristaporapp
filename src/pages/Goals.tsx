@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { CalendarRange, CalendarDays, Sun, X, Check } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL } from "../theme";
 import { getGoal, saveGoal } from "../db";
+import { useAuth } from "../auth";
 import { useToast } from "../toast";
 import { TAB_BAR_HEIGHT } from "../components/TabBar";
 import PrimaryButton from "../components/PrimaryButton";
@@ -9,6 +10,7 @@ import GoalDashboard from "../components/GoalDashboard";
 import type { GoalData } from "../types";
 
 export default function Goals() {
+  const { user } = useAuth();
   const { show } = useToast();
 
   const [goal, setGoal] = useState<GoalData | null>(null);
@@ -31,8 +33,9 @@ export default function Goals() {
   }, [show]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (user) load();
+    else setLoading(false);
+  }, [user, load]);
 
   const openSheet = () => {
     setTarget(goal?.configured ? String(goal.monthly_target) : "");

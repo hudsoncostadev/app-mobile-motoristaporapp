@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { X, ArrowLeft, Clock, Route as RouteIcon, Check } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL, formatTimer } from "../theme";
 import { getToday, closeWorkday } from "../db";
+import { useAuth } from "../auth";
 import { useToast } from "../toast";
 import PrimaryButton from "../components/PrimaryButton";
 
@@ -15,6 +16,7 @@ function num(s: string): number {
 
 export default function CloseDay() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { show } = useToast();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -34,6 +36,7 @@ export default function CloseDay() {
   const [outrosGasto, setOutrosGasto] = useState("");
 
   useEffect(() => {
+    if (!user) { setLoading(false); return; }
     (async () => {
       try {
         const res = await getToday();
@@ -54,7 +57,7 @@ export default function CloseDay() {
       }
     })();
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [navigate, show]);
+  }, [navigate, show, user]);
 
   const toggleApp = (app: string) => {
     setSelected((prev) => prev.includes(app) ? prev.filter((a) => a !== app) : [...prev, app]);

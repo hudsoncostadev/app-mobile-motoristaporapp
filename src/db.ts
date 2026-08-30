@@ -12,16 +12,21 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+async function getUserId(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user?.id ?? null;
+}
+
 // ---- Workday ----
 
 export async function getToday(): Promise<TodayResp> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) return { state: "none", workday: null };
+  const uid = await getUserId();
+  if (!uid) return { state: "none", workday: null };
 
   const { data: active } = await supabase
     .from("workdays")
     .select("*")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", uid)
     .eq("status", "active")
     .is("deleted_at", null)
     .maybeSingle();
@@ -31,7 +36,7 @@ export async function getToday(): Promise<TodayResp> {
   const { data: closed } = await supabase
     .from("workdays")
     .select("*")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", uid)
     .eq("status", "closed")
     .eq("day_key", todayKey())
     .is("deleted_at", null)
@@ -42,8 +47,8 @@ export async function getToday(): Promise<TodayResp> {
 }
 
 export async function startWorkday(): Promise<TodayResp> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not authenticated");
+  const uid = await getUserId();
+  if (!uid) throw new Error("Not authenticated");
 
   const existing = await getToday();
   if (existing.state === "active") return existing;
@@ -53,7 +58,7 @@ export async function startWorkday(): Promise<TodayResp> {
   const { data, error } = await supabase
     .from("workdays")
     .insert({
-      user_id: userData.user.id,
+      user_id: uid,
       day_key: todayKey(),
       status: "active",
       started_at: now,
@@ -70,13 +75,13 @@ export async function closeWorkday(
   km: number,
   expenses: Record<string, number>
 ): Promise<TodayResp> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not authenticated");
+  const uid = await getUserId();
+  if (!uid) throw new Error("Not authenticated");
 
   const { data: active } = await supabase
     .from("workdays")
     .select("*")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", uid)
     .eq("status", "active")
     .is("deleted_at", null)
     .maybeSingle();
@@ -137,19 +142,19 @@ function rowToWorkday(row: any): Workday {
 // ---- Goals ----
 
 export async function getGoal(): Promise<GoalData> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not authenticated");
+  const uid = await getUserId();
+  if (!uid) return { configured: false, month_bruto: 0, month_liquido: 0, worked_days_count: 0 };
 
   const { data: goalRow } = await supabase
     .from("goal_settings")
     .select("*")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", uid)
     .maybeSingle();
 
   const { data: days } = await supabase
     .from("workdays")
     .select("day_key, bruto, liquido, km, hours, rides_total")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", uid)
     .eq("status", "closed")
     .is("deleted_at", null)
     .order("ended_at", { ascending: false });
@@ -158,13 +163,13 @@ export async function getGoal(): Promise<GoalData> {
 }
 
 export async function saveGoal(monthlyTarget: number, daysPerWeek: number): Promise<GoalData> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not authenticated");
+  const uid = await getUserId();
+  if (!uid) throw new Error("Not authenticated");
 
   const { error } = await supabase
     .from("goal_settings")
     .upsert({
-      user_id: userData.user.id,
+      user_id: uid,
       monthly_target: round2(monthlyTarget),
       days_per_week: daysPerWeek,
       updated_at: new Date().toISOString(),
@@ -227,13 +232,13 @@ function computeGoal(goal: any, days: any[]): GoalData {
 // ---- Balance ----
 
 export async function getBalanceSummary(): Promise<BalanceSummary> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not authenticated");
+  const uid = await getUserId();
+  if (!uid) return emptyBalance();
 
   const { data: days } = await supabase
     .from("workdays")
     .select("*")
-    .eq("user_id", userData.user.id)
+    .eq("user_id", uid)
     .eq("status", "closed")
     .is("deleted_at", null)
     .order("ended_at", { ascending: false });
@@ -294,16 +299,35 @@ export async function getBalanceSummary(): Promise<BalanceSummary> {
   };
 }
 
+function emptyBalance(): BalanceSummary {
+  const chart = [];
+  for (let i = 6; i >= 0; i--) {
+    const dt = new Date(Date.now() - i * 86400000);
+    chart.push({
+      day_key: dt.toISOString().slice(0, 10),
+      label: dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+      bruto: 0,
+      liquido: 0,
+    });
+  }
+  return {
+    total_bruto: 0, total_liquido: 0, total_gastos: 0,
+    total_rides: 0, total_km: 0, total_hours: 0,
+    week_bruto: 0, week_liquido: 0, today_bruto: 0,
+    days: chart, records: [],
+  };
+}
+
 // ---- Profile ----
 
 export async function updateProfile(name: string, vehicle: string): Promise<void> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not authenticated");
+  const uid = await getUserId();
+  if (!uid) throw new Error("Not authenticated");
 
   const { error } = await supabase
     .from("profiles")
     .update({ name, vehicle })
-    .eq("id", userData.user.id);
+    .eq("id", uid);
 
   if (error) throw new Error(error.message);
 }
