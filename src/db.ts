@@ -243,6 +243,3 @@ export function storeUser(user: User): void {
 export function clearStoredUser(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
-
-
-export { verifyUserPassword, signupUser, getStoredUser, storeUser, clearStoredUser }
