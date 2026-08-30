@@ -1,37 +1,101 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header
-from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
-import logging
+import sqlite3
 import uuid
 import bcrypt
 import httpx
 import calendar
+import asyncio
 from pathlib import Path
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
 from datetime import datetime, timezone, timedelta
+from typing import Optional, List
+
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header
+from starlette.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr
+import logging
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+DB_PATH = str(ROOT_DIR / "driverbank.db")
 
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ----------------------------- DB setup ---------------------------------------
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT,
+            picture TEXT,
+            vehicle TEXT,
+            auth_provider TEXT DEFAULT 'email',
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            session_token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS workdays (
+            workday_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            day_key TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT,
+            ended_at TEXT,
+            created_at TEXT NOT NULL,
+            deleted_at TEXT,
+            hours REAL DEFAULT 0,
+            km REAL DEFAULT 0,
+            bruto REAL DEFAULT 0,
+            liquido REAL DEFAULT 0,
+            gastos_total REAL DEFAULT 0,
+            rides_total INTEGER DEFAULT 0,
+            apps TEXT,
+            expenses TEXT
+        );
+        CREATE TABLE IF NOT EXISTS goal_settings (
+            user_id TEXT PRIMARY KEY,
+            monthly_target REAL NOT NULL,
+            days_per_week INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_workdays_user_status ON workdays(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_workdays_user_day ON workdays(user_id, day_key);
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+init_db()
 
 
 # ----------------------------- Helpers ---------------------------------------
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def now_iso() -> str:
+    return now_utc().isoformat()
 
 
 def today_key(dt: Optional[datetime] = None) -> str:
@@ -65,30 +129,62 @@ def make_aware(dt: datetime) -> datetime:
     return dt
 
 
+def parse_dt(val) -> Optional[datetime]:
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(val)
+    except Exception:
+        return None
+
+
 async def create_session(user_id: str) -> str:
     token = f"st_{uuid.uuid4().hex}{uuid.uuid4().hex}"
-    await db.user_sessions.insert_one({
-        "session_token": token,
-        "user_id": user_id,
-        "created_at": now_utc(),
-        "expires_at": now_utc() + timedelta(days=7),
-    })
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO user_sessions (session_token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (token, user_id, now_iso(), (now_utc() + timedelta(days=7)).isoformat()),
+    )
+    conn.commit()
+    conn.close()
     return token
+
+
+def row_to_user(row: sqlite3.Row) -> dict:
+    return {
+        "user_id": row["user_id"],
+        "name": row["name"],
+        "email": row["email"],
+        "password_hash": row["password_hash"],
+        "picture": row["picture"],
+        "vehicle": row["vehicle"],
+        "auth_provider": row["auth_provider"],
+        "created_at": row["created_at"],
+    }
 
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = authorization.split(" ", 1)[1].strip()
-    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
-    if not session:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM user_sessions WHERE session_token = ?", (token,)
+    ).fetchone()
+    if not row:
+        conn.close()
         raise HTTPException(status_code=401, detail="Invalid session")
-    if make_aware(session["expires_at"]) < now_utc():
+    expires = parse_dt(row["expires_at"])
+    if not expires or expires < now_utc():
+        conn.close()
         raise HTTPException(status_code=401, detail="Session expired")
-    user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0, "password_hash": 0})
-    if not user:
+    urow = conn.execute(
+        "SELECT * FROM users WHERE user_id = ?", (row["user_id"],)
+    ).fetchone()
+    conn.close()
+    if not urow:
         raise HTTPException(status_code=401, detail="User not found")
-    return user
+    return row_to_user(urow)
 
 
 def public_user(user: dict) -> dict:
@@ -149,33 +245,34 @@ class ProfileUpdate(BaseModel):
 # ----------------------------- Auth routes ------------------------------------
 @api_router.post("/auth/register")
 async def register(data: RegisterInput):
-    existing = await db.users.find_one({"email": data.email.lower()})
+    conn = get_db()
+    existing = conn.execute("SELECT 1 FROM users WHERE email = ?", (data.email.lower(),)).fetchone()
     if existing:
+        conn.close()
         raise HTTPException(status_code=400, detail="E-mail já cadastrado")
-    user = {
-        "user_id": gen_id("user"),
-        "name": data.name.strip() or "Parceiro",
-        "email": data.email.lower(),
-        "password_hash": hash_password(data.password),
-        "picture": None,
-        "vehicle": None,
-        "auth_provider": "email",
-        "created_at": now_utc(),
-    }
-    await db.users.insert_one(user)
-    token = await create_session(user["user_id"])
-    return {"session_token": token, "user": public_user(user)}
+    user_id = gen_id("user")
+    conn.execute(
+        "INSERT INTO users (user_id, name, email, password_hash, picture, vehicle, auth_provider, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, data.name.strip() or "Parceiro", data.email.lower(),
+         hash_password(data.password), None, None, "email", now_iso()),
+    )
+    conn.commit()
+    conn.close()
+    token = await create_session(user_id)
+    return {"session_token": token, "user": public_user({"user_id": user_id, "name": data.name.strip() or "Parceiro", "email": data.email.lower(), "picture": None, "vehicle": None})}
 
 
 @api_router.post("/auth/login")
 async def login(data: LoginInput):
-    user = await db.users.find_one({"email": data.email.lower()})
-    if not user or not user.get("password_hash"):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE email = ?", (data.email.lower(),)).fetchone()
+    conn.close()
+    if not row or not row["password_hash"]:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    if not verify_password(data.password, user["password_hash"]):
+    if not verify_password(data.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    token = await create_session(user["user_id"])
-    return {"session_token": token, "user": public_user(user)}
+    token = await create_session(row["user_id"])
+    return {"session_token": token, "user": public_user(row_to_user(row))}
 
 
 @api_router.post("/auth/session")
@@ -188,27 +285,24 @@ async def auth_session(data: SessionInput):
     email = (info.get("email") or "").lower()
     if not email:
         raise HTTPException(status_code=401, detail="Sessão inválida")
-    existing = await db.users.find_one({"email": email})
-    if existing:
-        user = existing
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$set": {"name": info.get("name") or user.get("name"),
-                      "picture": info.get("picture") or user.get("picture")}},
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    if row:
+        conn.execute(
+            "UPDATE users SET name = ?, picture = ? WHERE user_id = ?",
+            (info.get("name") or row["name"], info.get("picture") or row["picture"], row["user_id"]),
         )
-        user = await db.users.find_one({"user_id": user["user_id"]})
+        conn.commit()
+        user = row_to_user(conn.execute("SELECT * FROM users WHERE user_id = ?", (row["user_id"],)).fetchone())
     else:
-        user = {
-            "user_id": gen_id("user"),
-            "name": info.get("name") or "Parceiro",
-            "email": email,
-            "password_hash": None,
-            "picture": info.get("picture"),
-            "vehicle": None,
-            "auth_provider": "google",
-            "created_at": now_utc(),
-        }
-        await db.users.insert_one(user)
+        user_id = gen_id("user")
+        conn.execute(
+            "INSERT INTO users (user_id, name, email, password_hash, picture, vehicle, auth_provider, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, info.get("name") or "Parceiro", email, None, info.get("picture"), None, "google", now_iso()),
+        )
+        conn.commit()
+        user = {"user_id": user_id, "name": info.get("name") or "Parceiro", "email": email, "picture": info.get("picture"), "vehicle": None}
+    conn.close()
     token = await create_session(user["user_id"])
     return {"session_token": token, "user": public_user(user)}
 
@@ -222,101 +316,122 @@ async def me(user: dict = Depends(get_current_user)):
 async def logout(authorization: Optional[str] = Header(None)):
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
-        await db.user_sessions.delete_one({"session_token": token})
+        conn = get_db()
+        conn.execute("DELETE FROM user_sessions WHERE session_token = ?", (token,))
+        conn.commit()
+        conn.close()
     return {"ok": True}
 
 
 @api_router.put("/profile")
 async def update_profile(data: ProfileUpdate, user: dict = Depends(get_current_user)):
-    updates = {k: v for k, v in data.dict().items() if v is not None}
-    if updates:
-        await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
-    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
-    return {"user": public_user(fresh)}
+    conn = get_db()
+    if data.name is not None:
+        conn.execute("UPDATE users SET name = ? WHERE user_id = ?", (data.name, user["user_id"]))
+    if data.vehicle is not None:
+        conn.execute("UPDATE users SET vehicle = ? WHERE user_id = ?", (data.vehicle, user["user_id"]))
+    conn.commit()
+    row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user["user_id"],)).fetchone()
+    conn.close()
+    return {"user": public_user(row_to_user(row))}
 
 
 # ----------------------------- Workday ----------------------------------------
-def serialize_workday(wd: dict) -> dict:
+import json
+
+def serialize_workday(row: sqlite3.Row) -> dict:
     return {
-        "workday_id": wd["workday_id"],
-        "day_key": wd["day_key"],
-        "status": wd["status"],
-        "started_at": make_aware(wd["started_at"]).isoformat() if wd.get("started_at") else None,
-        "ended_at": make_aware(wd["ended_at"]).isoformat() if wd.get("ended_at") else None,
-        "bruto": round(wd.get("bruto", 0), 2),
-        "liquido": round(wd.get("liquido", 0), 2),
-        "gastos_total": round(wd.get("gastos_total", 0), 2),
-        "km": wd.get("km", 0),
-        "hours": round(wd.get("hours", 0), 2),
-        "rides_total": wd.get("rides_total", 0),
-        "apps": wd.get("apps", []),
-        "expenses": wd.get("expenses", {}),
+        "workday_id": row["workday_id"],
+        "day_key": row["day_key"],
+        "status": row["status"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "bruto": round(row["bruto"] or 0, 2),
+        "liquido": round(row["liquido"] or 0, 2),
+        "gastos_total": round(row["gastos_total"] or 0, 2),
+        "km": row["km"] or 0,
+        "hours": round(row["hours"] or 0, 2),
+        "rides_total": row["rides_total"] or 0,
+        "apps": json.loads(row["apps"]) if row["apps"] else [],
+        "expenses": json.loads(row["expenses"]) if row["expenses"] else {},
     }
 
 
-async def find_active(user_id: str) -> Optional[dict]:
-    return await db.workdays.find_one(
-        {"user_id": user_id, "status": "active", "deleted_at": None}, {"_id": 0}
-    )
+def find_active_row(conn: sqlite3.Connection, user_id: str) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM workdays WHERE user_id = ? AND status = 'active' AND deleted_at IS NULL",
+        (user_id,),
+    ).fetchone()
 
 
-async def find_closed_today(user_id: str) -> Optional[dict]:
-    return await db.workdays.find_one(
-        {"user_id": user_id, "status": "closed", "day_key": today_key(), "deleted_at": None},
-        {"_id": 0},
-    )
+def find_closed_today_row(conn: sqlite3.Connection, user_id: str) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM workdays WHERE user_id = ? AND status = 'closed' AND day_key = ? AND deleted_at IS NULL",
+        (user_id, today_key()),
+    ).fetchone()
 
 
 @api_router.get("/workday/today")
 async def workday_today(user: dict = Depends(get_current_user)):
-    active = await find_active(user["user_id"])
+    conn = get_db()
+    active = find_active_row(conn, user["user_id"])
     if active:
+        conn.close()
         return {"state": "active", "workday": serialize_workday(active)}
-    closed = await find_closed_today(user["user_id"])
+    closed = find_closed_today_row(conn, user["user_id"])
     if closed:
+        conn.close()
         return {"state": "closed", "workday": serialize_workday(closed)}
+    conn.close()
     return {"state": "none", "workday": None}
 
 
 @api_router.post("/workday/start")
 async def workday_start(user: dict = Depends(get_current_user)):
-    active = await find_active(user["user_id"])
+    conn = get_db()
+    active = find_active_row(conn, user["user_id"])
     if active:
-        return {"state": "active", "workday": serialize_workday(active)}
-    if await find_closed_today(user["user_id"]):
+        result = {"state": "active", "workday": serialize_workday(active)}
+        conn.close()
+        return result
+    if find_closed_today_row(conn, user["user_id"]):
+        conn.close()
         raise HTTPException(status_code=400, detail="Você já encerrou o dia de hoje")
-    wd = {
-        "workday_id": gen_id("wd"),
-        "user_id": user["user_id"],
-        "day_key": today_key(),
-        "status": "active",
-        "started_at": now_utc(),
-        "ended_at": None,
-        "created_at": now_utc(),
-        "deleted_at": None,
-    }
-    await db.workdays.insert_one(wd)
-    return {"state": "active", "workday": serialize_workday(wd)}
+    workday_id = gen_id("wd")
+    conn.execute(
+        "INSERT INTO workdays (workday_id, user_id, day_key, status, started_at, created_at, deleted_at) VALUES (?, ?, ?, 'active', ?, ?, NULL)",
+        (workday_id, user["user_id"], today_key(), now_iso(), now_iso()),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM workdays WHERE workday_id = ?", (workday_id,)).fetchone()
+    conn.close()
+    return {"state": "active", "workday": serialize_workday(row)}
 
 
 @api_router.post("/workday/cancel")
 async def workday_cancel(user: dict = Depends(get_current_user)):
-    active = await find_active(user["user_id"])
+    conn = get_db()
+    active = find_active_row(conn, user["user_id"])
     if active:
-        await db.workdays.update_one(
-            {"workday_id": active["workday_id"]}, {"$set": {"deleted_at": now_utc()}}
+        conn.execute(
+            "UPDATE workdays SET deleted_at = ? WHERE workday_id = ?",
+            (now_iso(), active["workday_id"]),
         )
+        conn.commit()
+    conn.close()
     return {"state": "none", "workday": None}
 
 
 @api_router.post("/workday/close")
 async def workday_close(data: CloseInput, user: dict = Depends(get_current_user)):
-    active = await find_active(user["user_id"])
+    conn = get_db()
+    active = find_active_row(conn, user["user_id"])
     if not active:
+        conn.close()
         raise HTTPException(status_code=400, detail="Nenhum dia de trabalho ativo")
 
     ended = now_utc()
-    started = make_aware(active["started_at"])
+    started = make_aware(parse_dt(active["started_at"]) or now_utc())
     hours = max((ended - started).total_seconds() / 3600.0, 0)
 
     apps = [
@@ -330,41 +445,36 @@ async def workday_close(data: CloseInput, user: dict = Depends(get_current_user)
     gastos_total = round(exp.abastecimento + exp.alimentacao + exp.manutencao + exp.outros, 2)
     liquido = round(bruto - gastos_total, 2)
 
-    await db.workdays.update_one(
-        {"workday_id": active["workday_id"]},
-        {"$set": {
-            "status": "closed",
-            "ended_at": ended,
-            "hours": round(hours, 2),
-            "km": round(data.km, 1),
-            "apps": apps,
-            "expenses": exp.dict(),
-            "bruto": bruto,
-            "liquido": liquido,
-            "gastos_total": gastos_total,
-            "rides_total": rides_total,
-        }},
+    conn.execute(
+        """UPDATE workdays SET status='closed', ended_at=?, hours=?, km=?, bruto=?, liquido=?,
+           gastos_total=?, rides_total=?, apps=?, expenses=? WHERE workday_id=?""",
+        (ended.isoformat(), round(hours, 2), round(data.km, 1), bruto, liquido,
+         gastos_total, rides_total, json.dumps(apps), json.dumps(exp.dict()), active["workday_id"]),
     )
-    wd = await db.workdays.find_one({"workday_id": active["workday_id"]}, {"_id": 0})
-    return {"state": "closed", "workday": serialize_workday(wd)}
+    conn.commit()
+    row = conn.execute("SELECT * FROM workdays WHERE workday_id = ?", (active["workday_id"],)).fetchone()
+    conn.close()
+    return {"state": "closed", "workday": serialize_workday(row)}
 
 
 # ----------------------------- Aggregations -----------------------------------
-async def closed_days(user_id: str) -> List[dict]:
-    return await db.workdays.find(
-        {"user_id": user_id, "status": "closed", "deleted_at": None}, {"_id": 0}
-    ).sort("ended_at", -1).to_list(5000)
+def closed_days_rows(conn: sqlite3.Connection, user_id: str) -> List[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM workdays WHERE user_id = ? AND status = 'closed' AND deleted_at IS NULL ORDER BY ended_at DESC",
+        (user_id,),
+    ).fetchall()
 
 
 @api_router.get("/balance/summary")
 async def balance_summary(user: dict = Depends(get_current_user)):
-    days = await closed_days(user["user_id"])
-    total_bruto = round(sum(d.get("bruto", 0) for d in days), 2)
-    total_liquido = round(sum(d.get("liquido", 0) for d in days), 2)
-    total_gastos = round(sum(d.get("gastos_total", 0) for d in days), 2)
-    total_rides = sum(d.get("rides_total", 0) for d in days)
-    total_km = round(sum(d.get("km", 0) for d in days), 1)
-    total_hours = round(sum(d.get("hours", 0) for d in days), 1)
+    conn = get_db()
+    days = closed_days_rows(conn, user["user_id"])
+    total_bruto = round(sum(d["bruto"] or 0 for d in days), 2)
+    total_liquido = round(sum(d["liquido"] or 0 for d in days), 2)
+    total_gastos = round(sum(d["gastos_total"] or 0 for d in days), 2)
+    total_rides = sum(d["rides_total"] or 0 for d in days)
+    total_km = round(sum(d["km"] or 0 for d in days), 1)
+    total_hours = round(sum(d["hours"] or 0 for d in days), 1)
 
     by_day = {d["day_key"]: d for d in days}
     chart = []
@@ -375,15 +485,16 @@ async def balance_summary(user: dict = Depends(get_current_user)):
         chart.append({
             "day_key": dk,
             "label": dt.strftime("%d/%m"),
-            "bruto": round(rec.get("bruto", 0), 2) if rec else 0,
-            "liquido": round(rec.get("liquido", 0), 2) if rec else 0,
+            "bruto": round(rec["bruto"] or 0, 2) if rec else 0,
+            "liquido": round(rec["liquido"] or 0, 2) if rec else 0,
         })
 
     week_keys = {(now_utc() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)}
-    week_bruto = round(sum(d.get("bruto", 0) for d in days if d["day_key"] in week_keys), 2)
-    week_liquido = round(sum(d.get("liquido", 0) for d in days if d["day_key"] in week_keys), 2)
+    week_bruto = round(sum(d["bruto"] or 0 for d in days if d["day_key"] in week_keys), 2)
+    week_liquido = round(sum(d["liquido"] or 0 for d in days if d["day_key"] in week_keys), 2)
 
     records = [serialize_workday(d) for d in days[:60]]
+    conn.close()
 
     return {
         "total_bruto": total_bruto,
@@ -394,7 +505,7 @@ async def balance_summary(user: dict = Depends(get_current_user)):
         "total_hours": total_hours,
         "week_bruto": week_bruto,
         "week_liquido": week_liquido,
-        "today_bruto": round(by_day.get(today_key(), {}).get("bruto", 0), 2),
+        "today_bruto": round(by_day.get(today_key(), {}).get("bruto", 0) if by_day.get(today_key()) else 0, 2),
         "days": chart,
         "records": records,
     }
@@ -455,10 +566,32 @@ def compute_goal(goal: Optional[dict], days: List[dict]) -> dict:
     }
 
 
+def row_to_dict_list(rows: List[sqlite3.Row]) -> List[dict]:
+    result = []
+    for r in rows:
+        result.append({
+            "workday_id": r["workday_id"],
+            "day_key": r["day_key"],
+            "status": r["status"],
+            "started_at": r["started_at"],
+            "ended_at": r["ended_at"],
+            "bruto": r["bruto"] or 0,
+            "liquido": r["liquido"] or 0,
+            "gastos_total": r["gastos_total"] or 0,
+            "km": r["km"] or 0,
+            "hours": r["hours"] or 0,
+            "rides_total": r["rides_total"] or 0,
+        })
+    return result
+
+
 @api_router.get("/goals")
 async def get_goal(user: dict = Depends(get_current_user)):
-    goal = await db.goal_settings.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    days = await closed_days(user["user_id"])
+    conn = get_db()
+    grow = conn.execute("SELECT * FROM goal_settings WHERE user_id = ?", (user["user_id"],)).fetchone()
+    goal = {"monthly_target": grow["monthly_target"], "days_per_week": grow["days_per_week"]} if grow else None
+    days = row_to_dict_list(closed_days_rows(conn, user["user_id"]))
+    conn.close()
     return compute_goal(goal, days)
 
 
@@ -468,24 +601,26 @@ async def set_goal(data: GoalInput, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Meta deve ser maior que zero")
     if data.days_per_week < 1 or data.days_per_week > 7:
         raise HTTPException(status_code=400, detail="Dias por semana inválido")
-    await db.goal_settings.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {
-            "user_id": user["user_id"],
-            "monthly_target": round(data.monthly_target, 2),
-            "days_per_week": int(data.days_per_week),
-            "updated_at": now_utc(),
-        }},
-        upsert=True,
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO goal_settings (user_id, monthly_target, days_per_week, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET monthly_target=excluded.monthly_target, days_per_week=excluded.days_per_week, updated_at=excluded.updated_at",
+        (user["user_id"], round(data.monthly_target, 2), int(data.days_per_week), now_iso()),
     )
-    goal = await db.goal_settings.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    days = await closed_days(user["user_id"])
+    conn.commit()
+    grow = conn.execute("SELECT * FROM goal_settings WHERE user_id = ?", (user["user_id"],)).fetchone()
+    goal = {"monthly_target": grow["monthly_target"], "days_per_week": grow["days_per_week"]}
+    days = row_to_dict_list(closed_days_rows(conn, user["user_id"]))
+    conn.close()
     return compute_goal(goal, days)
 
 
 @api_router.delete("/goals")
 async def delete_goal(user: dict = Depends(get_current_user)):
-    await db.goal_settings.delete_one({"user_id": user["user_id"]})
+    conn = get_db()
+    conn.execute("DELETE FROM goal_settings WHERE user_id = ?", (user["user_id"],))
+    conn.commit()
+    conn.close()
     return {"ok": True}
 
 
@@ -503,20 +638,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("user_id", unique=True)
-    await db.user_sessions.create_index("session_token", unique=True)
-    await db.user_sessions.create_index("user_id")
-    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
-    await db.workdays.create_index([("user_id", 1), ("status", 1)])
-    await db.workdays.create_index([("user_id", 1), ("day_key", 1)])
-    await db.goal_settings.create_index("user_id", unique=True)
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
