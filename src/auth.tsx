@@ -90,7 +90,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       options: { data: { name } },
     });
     if (error) throw new Error(error.message);
-    if (data.user) {
+
+    if (data.session && data.user) {
+      const profile = await fetchProfile(data.user.id);
+      if (profile) setUser(profile);
+      else
+        setUser({
+          user_id: data.user.id,
+          name,
+          email,
+          picture: null,
+          vehicle: null,
+        });
+    } else if (data.user) {
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError) throw new Error(signInError.message);
       const profile = await fetchProfile(data.user.id);
       if (profile) setUser(profile);
       else
