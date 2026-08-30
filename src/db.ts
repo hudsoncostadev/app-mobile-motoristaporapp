@@ -23,7 +23,7 @@ export async function getToday(): Promise<TodayResp> {
   const uid = await getUserId();
   if (!uid) return { state: "none", workday: null };
 
-  const { data: active } = await supabase
+  const { data: active, error: activeErr } = await supabase
     .from("workdays")
     .select("*")
     .eq("user_id", uid)
@@ -31,9 +31,10 @@ export async function getToday(): Promise<TodayResp> {
     .is("deleted_at", null)
     .maybeSingle();
 
+  if (activeErr) { console.error("getToday active error:", activeErr); throw new Error(activeErr.message); }
   if (active) return { state: "active", workday: rowToWorkday(active) };
 
-  const { data: closed } = await supabase
+  const { data: closed, error: closedErr } = await supabase
     .from("workdays")
     .select("*")
     .eq("user_id", uid)
@@ -42,6 +43,7 @@ export async function getToday(): Promise<TodayResp> {
     .is("deleted_at", null)
     .maybeSingle();
 
+  if (closedErr) { console.error("getToday closed error:", closedErr); throw new Error(closedErr.message); }
   if (closed) return { state: "closed", workday: rowToWorkday(closed) };
   return { state: "none", workday: null };
 }
@@ -66,7 +68,7 @@ export async function startWorkday(): Promise<TodayResp> {
     .select("*")
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) { console.error("startWorkday insert error:", error); throw new Error(error.message); }
   return { state: "active", workday: rowToWorkday(data) };
 }
 
@@ -145,19 +147,21 @@ export async function getGoal(): Promise<GoalData> {
   const uid = await getUserId();
   if (!uid) return { configured: false, month_bruto: 0, month_liquido: 0, worked_days_count: 0 };
 
-  const { data: goalRow } = await supabase
+  const { data: goalRow, error: goalErr } = await supabase
     .from("goal_settings")
     .select("*")
     .eq("user_id", uid)
     .maybeSingle();
+  if (goalErr) { console.error("getGoal error:", goalErr); throw new Error(goalErr.message); }
 
-  const { data: days } = await supabase
+  const { data: days, error: daysErr } = await supabase
     .from("workdays")
     .select("day_key, bruto, liquido, km, hours, rides_total")
     .eq("user_id", uid)
     .eq("status", "closed")
     .is("deleted_at", null)
     .order("ended_at", { ascending: false });
+  if (daysErr) { console.error("getGoal days error:", daysErr); throw new Error(daysErr.message); }
 
   return computeGoal(goalRow, days || []);
 }
@@ -175,7 +179,7 @@ export async function saveGoal(monthlyTarget: number, daysPerWeek: number): Prom
       updated_at: new Date().toISOString(),
     });
 
-  if (error) throw new Error(error.message);
+  if (error) { console.error("saveGoal error:", error); throw new Error(error.message); }
   return getGoal();
 }
 

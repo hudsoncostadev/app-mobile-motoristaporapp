@@ -1,0 +1,19 @@
+-- Grant explicit permissions on auth tables to authenticator
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.users TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.identities TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.sessions TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.refresh_tokens TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.audit_log_entries TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.flow_state TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.mfa_amr_claims TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.mfa_challenges TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.mfa_factors TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.one_time_tokens TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.saml_providers TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.saml_relay_states TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.sso_domains TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.sso_providers TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.webauthn_challenges TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.webauthn_credentials TO authenticator;
+GRANT SELECT, INSERT, UPDATE, DELETE ON auth.instances TO authenticator;
+GRANT SELECT ON auth.schema_migrations TO authenticator;
