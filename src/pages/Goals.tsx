@@ -80,7 +80,7 @@ export default function Goals() {
 
             {goal?.configured && (
               <>
-                <div style={{ backgroundColor: colors.white, borderRadius: radius.lg, paddingHorizontal: spacing.lg, marginTop: spacing.md }}>
+                <div style={{ backgroundColor: colors.white, borderRadius: radius.lg, padding: `0 ${spacing.lg}px`, marginTop: spacing.md }}>
                   <ProgressLine icon={<Sun size={16} color={colors.card} />} label="Hoje" current={goal.today_bruto ?? 0} target={goal.daily_target ?? 0} progress={goal.today_progress ?? 0} />
                   <ProgressLine icon={<CalendarDays size={16} color={colors.card} />} label="Esta semana" current={goal.week_bruto ?? 0} target={goal.weekly_target ?? 0} progress={goal.week_progress ?? 0} />
                   <ProgressLine icon={<CalendarRange size={16} color={colors.card} />} label="Este mês" current={goal.month_bruto} target={goal.monthly_target ?? 0} progress={goal.progress ?? 0} last />
