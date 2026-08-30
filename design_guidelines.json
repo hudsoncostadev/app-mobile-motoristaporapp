@@ -1,0 +1,150 @@
+{
+  "app_name": "DriverBank PWA",
+  "personality": "5 Brutalist Mobile",
+  "personality_one_liner": "High-contrast, utility-first digital bank with strict typography and striking lime-green accents.",
+  "color": {
+    "surface": "#f4f4f4",
+    "onSurface": "#010101",
+    "surfaceSecondary": "#010101",
+    "onSurfaceSecondary": "#ffffff",
+    "surfaceTertiary": "#e5e5e5",
+    "onSurfaceTertiary": "#010101",
+    "surfaceInverse": "#010101",
+    "onSurfaceInverse": "#ffffff",
+    "brand": "#c5f04a",
+    "brandPrimary": "#c5f04a",
+    "onBrandPrimary": "#010101",
+    "brandSecondary": "#ffffff",
+    "onBrandSecondary": "#010101",
+    "brandTertiary": "#010101",
+    "onBrandTertiary": "#ffffff",
+    "success": "#c5f04a",
+    "onSuccess": "#010101",
+    "warning": "#f5a623",
+    "onWarning": "#010101",
+    "error": "#ff3333",
+    "onError": "#ffffff",
+    "info": "#010101",
+    "onInfo": "#ffffff",
+    "border": "#010101",
+    "borderStrong": "#010101",
+    "divider": "#e5e5e5"
+  },
+  "typography": {
+    "displayFontFamily": "Inter",
+    "textFontFamily": "Inter",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24,
+      "3xl": 32,
+      "4xl": 48
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room. Cards use md/lg margins. Elements inside the main card should be neatly spaced.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 8,
+    "md": 16,
+    "lg": 32,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "lucide-react-native",
+  "glassmorphism": {
+    "enabled": "false",
+    "do's": [],
+    "dont's": ["Do not use blur or glassmorphism. This is a brutalist, high-contrast design."]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home",
+      "purpose": "Primary dashboard focusing entirely on today's revenue and the main 'start workday' CTA.",
+      "states": {
+        "loading": "Spinner centered on the f4f4f4 surface.",
+        "empty": "Should not be empty; default value is R$ 0,00.",
+        "error": "Error message with a retry button to fetch earnings."
+      },
+      "layout": "Header: 'Bom dia, Parceiro' (lg/xl font, onSurface) and today's date underneath (sm font, maybe muted/gray). Main Element: A single large credit-card style card (surfaceSecondary #010101, radius 32px, padding 24px) centered. Inside the card: Top subtitle 'Faturamento Hoje' in #c5f04a. Middle: 'R$ 0,00' huge text (4xl, white). Bottom: A wide, full-width button (brandSecondary #ffffff, text #010101) saying 'Iniciar Dia de Trabalho'. Optional: below the card, recent trips or mini stats."
+    },
+    {
+      "name": "Goals (Metas)",
+      "purpose": "Track daily and weekly revenue goals with progress bars.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "Icon + 'No active goals' + button to 'Set a Goal'.",
+        "error": "Readable message + Retry."
+      },
+      "layout": "List of goals. Cards can be light with dark borders or dark cards. Use #c5f04a for progress bars."
+    },
+    {
+      "name": "Balance (Balanço)",
+      "purpose": "Earnings history, analytics, and withdrawals.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "No earnings history yet.",
+        "error": "Readable message + Retry."
+      },
+      "layout": "Top summary of total balance. Below: a list of recent transactions/trips. Brutalist list design: hard borders between items, clear typography for amounts."
+    },
+    {
+      "name": "Profile (Perfil)",
+      "purpose": "Driver details, vehicle info, settings.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "N/A",
+        "error": "Readable message + Retry."
+      },
+      "layout": "Avatar (or real image) at the top. List of settings items (Account, Vehicle, Support, Logout) using lucide icons. High contrast list rows."
+    },
+    {
+      "name": "Login",
+      "purpose": "Entry point for drivers to authenticate.",
+      "states": {
+        "loading": "Button shows spinner.",
+        "empty": "N/A",
+        "error": "Toast or inline error for bad credentials."
+      },
+      "layout": "Clean layout on #f4f4f4. Huge app title in Inter bold. Inputs with hard borders. Primary CTA 'Login' in #010101 with #ffffff text. Secondary button for 'Continue with Google'."
+    }
+  ],
+  "images": {
+    "profile_avatar": {
+      "url": "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwxfHx1YmVyJTIwZHJpdmVyJTIwZHJpdmluZyUyMGNhciUyMHByb2ZpbGV8ZW58MHx8fHwxNzg4MTA1MDA4fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "man driving a car wearing wrist watch"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the user's color palette: main background #f4f4f4, dark cards #010101, light text #ffffff, vibrant lime-green accent #c5f04a.",
+    "Use Inter font across the whole application.",
+    "Use lucide-react-native for icons.",
+    "The Bottom Navigation MUST have rounded top corners (e.g. borderTopLeftRadius 24, borderTopRightRadius 24) and a subtle shadow. The background of the nav bar is white or very light gray.",
+    "The Home screen main card MUST be #010101, border radius 32px, padding 24px (p-6 equivalent). It contains 'Faturamento Hoje' as subtitle, 'R$ 0,00' as big value, and a wide white button 'Iniciar Dia de Trabalho'.",
+    "Keep the UI layout 100% mobile and full screen.",
+    "Since it's a brutalist/digital bank style, rely on size and spacing for hierarchy instead of shadows and blur.",
+    "Use the image provided for the Profile avatar placeholder."
+  ]
+}
