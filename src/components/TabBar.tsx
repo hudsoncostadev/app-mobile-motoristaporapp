@@ -1,5 +1,5 @@
 import React from "react";
-import { Home, Target, BarChart3, User } from "lucide-react";
+import { Chrome as Home, Target, ChartBar as BarChart3, User } from "lucide-react";
 import { colors, font } from "../theme";
 import { useLocation, useNavigate } from "react-router-dom";
 

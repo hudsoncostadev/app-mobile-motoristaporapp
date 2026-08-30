@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Play, Square, Car, Clock, Route as RouteIcon, CheckCircle2, TrendingUp } from "lucide-react";
+import { Play, Square, Car, Clock, Route as RouteIcon, CircleCheck as CheckCircle2, TrendingUp } from "lucide-react";
 import { colors, font, radius, spacing, formatBRL, formatTimer, formatHours, todayLabel, greeting } from "../theme";
 import { api } from "../api";
 import { useAuth } from "../auth";

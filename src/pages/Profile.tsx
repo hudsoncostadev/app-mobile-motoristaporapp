@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Car, ChevronRight, LogOut, ShieldCheck, HelpCircle, Pencil, Mail, X } from "lucide-react";
+import { Car, ChevronRight, LogOut, ShieldCheck, CircleHelp as HelpCircle, Pencil, Mail, X } from "lucide-react";
 import { colors, font, radius, spacing } from "../theme";
 import { api } from "../api";
 import { useAuth } from "../auth";
