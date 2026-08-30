@@ -1,75 +1,59 @@
 import { supabase } from "./supabase";
-import type { TodayResp, GoalData, BalanceSummary, Workday } from "./types";
-
-function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-function monthPrefix(): string {
-  return new Date().toISOString().slice(0, 7);
-}
+import type { TodayResp, GoalData, BalanceSummary, Workday, User } from "./types";
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-async function getUserId(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user?.id ?? null;
+// ---- Auth ----
+
+export async function verifyUserPassword(email: string, password: string): Promise<User> {
+  const { data, error } = await supabase.rpc("verify_user_password", {
+    user_email: email,
+    user_password: password,
+  });
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Credenciais inválidas");
+  const u = data[0];
+  return { user_id: u.id, name: u.name, email: u.email, picture: null, vehicle: null };
+}
+
+export async function signupUser(name: string, email: string, password: string): Promise<User> {
+  const { data, error } = await supabase.rpc("signup_user", {
+    p_email: email,
+    p_password: password,
+    p_name: name,
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return {
+    user_id: data.user.id,
+    name: data.user.name,
+    email: data.user.email,
+    picture: null,
+    vehicle: null,
+  };
 }
 
 // ---- Workday ----
 
 export async function getToday(): Promise<TodayResp> {
-  const uid = await getUserId();
+  const uid = getStoredUserId();
   if (!uid) return { state: "none", workday: null };
 
-  const { data: active, error: activeErr } = await supabase
-    .from("workdays")
-    .select("*")
-    .eq("user_id", uid)
-    .eq("status", "active")
-    .is("deleted_at", null)
-    .maybeSingle();
-
-  if (activeErr) { console.error("getToday active error:", activeErr); throw new Error(activeErr.message); }
-  if (active) return { state: "active", workday: rowToWorkday(active) };
-
-  const { data: closed, error: closedErr } = await supabase
-    .from("workdays")
-    .select("*")
-    .eq("user_id", uid)
-    .eq("status", "closed")
-    .eq("day_key", todayKey())
-    .is("deleted_at", null)
-    .maybeSingle();
-
-  if (closedErr) { console.error("getToday closed error:", closedErr); throw new Error(closedErr.message); }
-  if (closed) return { state: "closed", workday: rowToWorkday(closed) };
-  return { state: "none", workday: null };
+  const { data, error } = await supabase.rpc("get_today_workday", { p_user_id: uid });
+  if (error) throw new Error(error.message);
+  if (!data || data.state === "none") return { state: "none", workday: null };
+  return { state: data.state, workday: rowToWorkday(data.workday) };
 }
 
 export async function startWorkday(): Promise<TodayResp> {
-  const uid = await getUserId();
+  const uid = getStoredUserId();
   if (!uid) throw new Error("Not authenticated");
 
-  const existing = await getToday();
-  if (existing.state === "active") return existing;
-  if (existing.state === "closed") throw new Error("Você já encerrou o dia de hoje");
-
-  const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("workdays")
-    .insert({
-      user_id: uid,
-      day_key: todayKey(),
-      status: "active",
-      started_at: now,
-    })
-    .select("*")
-    .single();
-
-  if (error) { console.error("startWorkday insert error:", error); throw new Error(error.message); }
-  return { state: "active", workday: rowToWorkday(data) };
+  const { data, error } = await supabase.rpc("start_workday", { p_user_id: uid });
+  if (error) throw new Error(error.message);
+  return { state: data.state, workday: rowToWorkday(data.workday) };
 }
 
 export async function closeWorkday(
@@ -77,53 +61,22 @@ export async function closeWorkday(
   km: number,
   expenses: Record<string, number>
 ): Promise<TodayResp> {
-  const uid = await getUserId();
+  const uid = getStoredUserId();
   if (!uid) throw new Error("Not authenticated");
 
-  const { data: active } = await supabase
-    .from("workdays")
-    .select("*")
-    .eq("user_id", uid)
-    .eq("status", "active")
-    .is("deleted_at", null)
-    .maybeSingle();
-
-  if (!active) throw new Error("Nenhum dia de trabalho ativo");
-
-  const ended = new Date();
-  const started = new Date(active.started_at || ended.toISOString());
-  const hours = Math.max((ended.getTime() - started.getTime()) / 3600000, 0);
   const validApps = apps.filter((a) => a.amount > 0 || a.rides > 0);
-  const bruto = round2(validApps.reduce((s, a) => s + a.amount, 0));
-  const ridesTotal = validApps.reduce((s, a) => s + a.rides, 0);
-  const gastosTotal = round2(
-    (expenses.abastecimento || 0) + (expenses.alimentacao || 0) + (expenses.manutencao || 0) + (expenses.outros || 0)
-  );
-  const liquido = round2(bruto - gastosTotal);
-
-  const { data, error } = await supabase
-    .from("workdays")
-    .update({
-      status: "closed",
-      ended_at: ended.toISOString(),
-      hours: round2(hours),
-      km: Math.round(km * 10) / 10,
-      bruto,
-      liquido,
-      gastos_total: gastosTotal,
-      rides_total: ridesTotal,
-      apps: validApps,
-      expenses,
-    })
-    .eq("id", active.id)
-    .select("*")
-    .single();
-
+  const { data, error } = await supabase.rpc("close_workday_data", {
+    p_user_id: uid,
+    p_apps: validApps,
+    p_km: km,
+    p_expenses: expenses,
+  });
   if (error) throw new Error(error.message);
-  return { state: "closed", workday: rowToWorkday(data) };
+  return { state: data.state, workday: rowToWorkday(data.workday) };
 }
 
 function rowToWorkday(row: any): Workday {
+  if (!row) return {} as Workday;
   return {
     workday_id: row.id,
     day_key: row.day_key,
@@ -144,162 +97,84 @@ function rowToWorkday(row: any): Workday {
 // ---- Goals ----
 
 export async function getGoal(): Promise<GoalData> {
-  const uid = await getUserId();
+  const uid = getStoredUserId();
   if (!uid) return { configured: false, month_bruto: 0, month_liquido: 0, worked_days_count: 0 };
 
-  const { data: goalRow, error: goalErr } = await supabase
-    .from("goal_settings")
-    .select("*")
-    .eq("user_id", uid)
-    .maybeSingle();
-  if (goalErr) { console.error("getGoal error:", goalErr); throw new Error(goalErr.message); }
+  const { data, error } = await supabase.rpc("get_goal_data", { p_user_id: uid });
+  if (error) throw new Error(error.message);
+  if (!data) return { configured: false, month_bruto: 0, month_liquido: 0, worked_days_count: 0 };
 
-  const { data: days, error: daysErr } = await supabase
-    .from("workdays")
-    .select("day_key, bruto, liquido, km, hours, rides_total")
-    .eq("user_id", uid)
-    .eq("status", "closed")
-    .is("deleted_at", null)
-    .order("ended_at", { ascending: false });
-  if (daysErr) { console.error("getGoal days error:", daysErr); throw new Error(daysErr.message); }
-
-  return computeGoal(goalRow, days || []);
-}
-
-export async function saveGoal(monthlyTarget: number, daysPerWeek: number): Promise<GoalData> {
-  const uid = await getUserId();
-  if (!uid) throw new Error("Not authenticated");
-
-  const { error } = await supabase
-    .from("goal_settings")
-    .upsert({
-      user_id: uid,
-      monthly_target: round2(monthlyTarget),
-      days_per_week: daysPerWeek,
-      updated_at: new Date().toISOString(),
-    });
-
-  if (error) { console.error("saveGoal error:", error); throw new Error(error.message); }
-  return getGoal();
-}
-
-function computeGoal(goal: any, days: any[]): GoalData {
-  const now = new Date();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const mp = monthPrefix();
-  const monthDays = days.filter((d) => String(d.day_key).startsWith(mp));
-  const monthBruto = round2(monthDays.reduce((s, d) => s + (Number(d.bruto) || 0), 0));
-  const monthLiquido = round2(monthDays.reduce((s, d) => s + (Number(d.liquido) || 0), 0));
-  const workedDaysCount = monthDays.length;
-
-  if (!goal) {
-    return { configured: false, month_bruto: monthBruto, month_liquido: monthLiquido, worked_days_count: workedDaysCount, days_in_month: daysInMonth };
+  if (!data.configured) {
+    return { configured: false, month_bruto: 0, month_liquido: 0, worked_days_count: 0 };
   }
-
-  const monthlyTarget = round2(goal.monthly_target);
-  const dpw = goal.days_per_week;
-  const weeksInMonth = daysInMonth / 7;
-  const workingDays = Math.max(Math.round(dpw * weeksInMonth), 1);
-  const dailyTarget = round2(monthlyTarget / workingDays);
-  const weeklyTarget = round2(dailyTarget * dpw);
-
-  const weekKeys = new Set<string>();
-  for (let i = 0; i < 7; i++) weekKeys.add(new Date(Date.now() - i * 86400000).toISOString().slice(0, 10));
-  const weekBruto = round2(days.filter((d) => weekKeys.has(String(d.day_key))).reduce((s, d) => s + (Number(d.bruto) || 0), 0));
-  const todayBruto = round2(days.find((d) => String(d.day_key) === todayKey())?.bruto || 0);
-
-  const remaining = Math.max(round2(monthlyTarget - monthBruto), 0);
-  const daysLeft = Math.max(workingDays - workedDaysCount, 0);
-  const neededPerDay = daysLeft > 0 ? round2(remaining / daysLeft) : 0;
 
   return {
     configured: true,
-    monthly_target: monthlyTarget,
-    days_per_week: dpw,
-    working_days: workingDays,
-    daily_target: dailyTarget,
-    weekly_target: weeklyTarget,
-    month_bruto: monthBruto,
-    month_liquido: monthLiquido,
-    week_bruto: weekBruto,
-    today_bruto: todayBruto,
-    worked_days_count: workedDaysCount,
-    days_in_month: daysInMonth,
-    progress: monthlyTarget > 0 ? Math.min(monthBruto / monthlyTarget, 1) : 0,
-    week_progress: weeklyTarget > 0 ? Math.min(weekBruto / weeklyTarget, 1) : 0,
-    today_progress: dailyTarget > 0 ? Math.min(todayBruto / dailyTarget, 1) : 0,
-    remaining,
-    needed_per_day: neededPerDay,
+    monthly_target: Number(data.monthly_target) || 0,
+    days_per_week: data.days_per_week || 5,
+  month_bruto: 0,
+    month_liquido: 0,
+  worked_days_count: 0,
+  daily_target: Number(data.monthly_target) > 0 && data.days_per_week > 0
+      ? round2(Number(data.monthly_target) / (data.days_per_week * 4))
+      : 0,
+    weekly_target: Number(data.monthly_target) > 0 && data.days_per_week > 0
+      ? round2((Number(data.monthly_target) / (data.days_per_week * 4)) * data.days_per_week)
+      : 0,
+    progress: 0,
+    week_progress: 0,
+    today_progress: 0,
+    remaining: Number(data.monthly_target) || 0,
+    needed_per_day: 0,
   };
+}
+
+export async function saveGoal(monthlyTarget: number, daysPerWeek: number): Promise<GoalData> {
+  const uid = getStoredUserId();
+  if (!uid) throw new Error("Not authenticated");
+
+  const { error } = await supabase.rpc("save_goal_data", {
+    p_user_id: uid,
+    p_monthly_target: monthlyTarget,
+    p_days_per_week: daysPerWeek,
+  });
+  if (error) throw new Error(error.message);
+  return getGoal();
 }
 
 // ---- Balance ----
 
 export async function getBalanceSummary(): Promise<BalanceSummary> {
-  const uid = await getUserId();
+  const uid = getStoredUserId();
   if (!uid) return emptyBalance();
 
-  const { data: days } = await supabase
-    .from("workdays")
-    .select("*")
-    .eq("user_id", uid)
-    .eq("status", "closed")
-    .is("deleted_at", null)
-    .order("ended_at", { ascending: false });
-
-  const allDays = days || [];
-  const totalBruto = round2(allDays.reduce((s, r) => s + (Number(r.bruto) || 0), 0));
-  const totalLiquido = round2(allDays.reduce((s, r) => s + (Number(r.liquido) || 0), 0));
-  const totalGastos = round2(allDays.reduce((s, r) => s + (Number(r.gastos_total) || 0), 0));
-  const totalRides = allDays.reduce((s, r) => s + (r.rides_total || 0), 0);
-  const totalKm = Math.round(allDays.reduce((s, r) => s + (Number(r.km) || 0), 0) * 10) / 10;
-  const totalHours = Math.round(allDays.reduce((s, r) => s + (Number(r.hours) || 0), 0) * 10) / 10;
-
-  const byDay: Record<string, any> = {};
-  allDays.forEach((r) => { byDay[String(r.day_key)] = r; });
+  const { data, error } = await supabase.rpc("get_balance_data", { p_user_id: uid });
+  if (error) throw new Error(error.message);
+  if (!data) return emptyBalance();
 
   const chart = [];
   for (let i = 6; i >= 0; i--) {
     const dt = new Date(Date.now() - i * 86400000);
-    const dk = dt.toISOString().slice(0, 10);
-    const rec = byDay[dk];
     chart.push({
-      day_key: dk,
+      day_key: dt.toISOString().slice(0, 10),
       label: dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
-      bruto: rec ? round2(Number(rec.bruto) || 0) : 0,
-      liquido: rec ? round2(Number(rec.liquido) || 0) : 0,
+      bruto: 0,
+      liquido: 0,
     });
   }
 
-  const weekKeys = new Set<string>();
-  for (let i = 0; i < 7; i++) weekKeys.add(new Date(Date.now() - i * 86400000).toISOString().slice(0, 10));
-  const weekBruto = round2(allDays.filter((r) => weekKeys.has(String(r.day_key))).reduce((s, r) => s + (Number(r.bruto) || 0), 0));
-  const weekLiquido = round2(allDays.filter((r) => weekKeys.has(String(r.day_key))).reduce((s, r) => s + (Number(r.liquido) || 0), 0));
-
-  const records = allDays.slice(0, 60).map((r) => ({
-    workday_id: r.id,
-    day_key: String(r.day_key),
-    ended_at: r.ended_at,
-    bruto: Number(r.bruto) || 0,
-    liquido: Number(r.liquido) || 0,
-    gastos_total: Number(r.gastos_total) || 0,
-    km: Number(r.km) || 0,
-    hours: Number(r.hours) || 0,
-    rides_total: r.rides_total || 0,
-  }));
-
   return {
-    total_bruto: totalBruto,
-    total_liquido: totalLiquido,
-    total_gastos: totalGastos,
-    total_rides: totalRides,
-    total_km: totalKm,
-    total_hours: totalHours,
-    week_bruto: weekBruto,
-    week_liquido: weekLiquido,
-    today_bruto: byDay[todayKey()]?.bruto || 0,
+    total_bruto: Number(data.total_bruto) || 0,
+    total_liquido: Number(data.total_liquido) || 0,
+    total_gastos: Number(data.total_gastos) || 0,
+    total_rides: data.total_rides || 0,
+    total_km: Number(data.total_km) || 0,
+    total_hours: Number(data.total_hours) || 0,
+    week_bruto: Number(data.week_bruto) || 0,
+    week_liquido: Number(data.week_liquido) || 0,
+    today_bruto: Number(data.today_bruto) || 0,
     days: chart,
-    records,
+    records: [],
   };
 }
 
@@ -325,13 +200,49 @@ function emptyBalance(): BalanceSummary {
 // ---- Profile ----
 
 export async function updateProfile(name: string, vehicle: string): Promise<void> {
-  const uid = await getUserId();
+  const uid = getStoredUserId();
   if (!uid) throw new Error("Not authenticated");
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({ name, vehicle })
-    .eq("id", uid);
-
+  const { error } = await supabase.rpc("update_profile_data", {
+    p_user_id: uid,
+    p_name: name,
+    p_vehicle: vehicle,
+  });
   if (error) throw new Error(error.message);
 }
+
+// ---- Local storage for user session ----
+
+const STORAGE_KEY = "driverbank_user";
+
+export function getStoredUserId(): string | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    return user.user_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function getStoredUser(): User | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function storeUser(user: User): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+}
+
+export function clearStoredUser(): void {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+
+export { verifyUserPassword, signupUser, getStoredUser, storeUser, clearStoredUser }
