@@ -2,7 +2,6 @@ import os
 import sqlite3
 import uuid
 import bcrypt
-import httpx
 import calendar
 import asyncio
 from pathlib import Path
@@ -207,9 +206,6 @@ class LoginInput(BaseModel):
     password: str
 
 
-class SessionInput(BaseModel):
-    session_id: str
-
 
 class AppEarning(BaseModel):
     platform: str
@@ -271,38 +267,6 @@ async def login(data: LoginInput):
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
     token = await create_session(row["user_id"])
     return {"session_token": token, "user": public_user(row_to_user(row))}
-
-
-@api_router.post("/auth/session")
-async def auth_session(data: SessionInput):
-    async with httpx.AsyncClient(timeout=15) as http:
-        resp = await http.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": data.session_id})
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Sessão inválida")
-    info = resp.json()
-    email = (info.get("email") or "").lower()
-    if not email:
-        raise HTTPException(status_code=401, detail="Sessão inválida")
-    conn = get_db()
-    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if row:
-        conn.execute(
-            "UPDATE users SET name = ?, picture = ? WHERE user_id = ?",
-            (info.get("name") or row["name"], info.get("picture") or row["picture"], row["user_id"]),
-        )
-        conn.commit()
-        user = row_to_user(conn.execute("SELECT * FROM users WHERE user_id = ?", (row["user_id"],)).fetchone())
-    else:
-        user_id = gen_id("user")
-        conn.execute(
-            "INSERT INTO users (user_id, name, email, password_hash, picture, vehicle, auth_provider, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (user_id, info.get("name") or "Parceiro", email, None, info.get("picture"), None, "google", now_iso()),
-        )
-        conn.commit()
-        user = {"user_id": user_id, "name": info.get("name") or "Parceiro", "email": email, "picture": info.get("picture"), "vehicle": None}
-    conn.close()
-    token = await create_session(user["user_id"])
-    return {"session_token": token, "user": public_user(user)}
 
 
 @api_router.get("/auth/me")
