@@ -23,8 +23,6 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
-EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
-
 # ----------------------------- DB setup ---------------------------------------
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
