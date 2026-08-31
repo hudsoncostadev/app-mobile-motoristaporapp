@@ -20,7 +20,7 @@ import { ApiError } from "@/src/api/client";
 export default function Login() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { loginEmail, register, loginGoogle } = useAuth();
+  const { loginEmail, register } = useAuth();
   const { show } = useToast();
 
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -45,18 +45,6 @@ export default function Login() {
       show(msg, "error");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const google = async () => {
-    setGoogleLoading(true);
-    try {
-      await loginGoogle();
-      router.replace("/(tabs)");
-    } catch {
-      show("Falha no login com Google", "error");
-    } finally {
-      setGoogleLoading(false);
     }
   };
 
@@ -133,29 +121,6 @@ export default function Login() {
             style={{ marginTop: spacing.sm }}
           />
 
-          <View style={styles.dividerRow}>
-            <View style={styles.line} />
-            <Text style={styles.dividerText}>ou</Text>
-            <View style={styles.line} />
-          </View>
-
-          <Pressable
-            testID="google-button"
-            onPress={google}
-            disabled={googleLoading}
-            style={({ pressed }) => [styles.googleBtn, { opacity: pressed ? 0.85 : 1 }]}
-          >
-            {googleLoading ? (
-              <ActivityIndicator color={colors.card} />
-            ) : (
-              <>
-                <View style={styles.gIcon}>
-                  <Text style={styles.gIconText}>G</Text>
-                </View>
-                <Text style={styles.googleText}>Continuar com Google</Text>
-              </>
-            )}
-          </Pressable>
         </View>
 
         <Pressable
