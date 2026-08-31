@@ -21,10 +21,17 @@
       "package": "com.emergent.driverearnings.zxposh"
     },
     "web": {
-      "bundler": "metro",
-      "output": "single",
-      "favicon": "./assets/images/favicon.png"
-    },
+  "bundler": "metro",
+  "output": "single",
+  "favicon": "./assets/images/favicon.png",
+  "name": "DriverBank",
+  "shortName": "DriverBank",
+  "lang": "pt-BR",
+  "themeColor": "#000000",
+  "backgroundColor": "#000000",
+  "display": "standalone",
+  "orientation": "portrait"
+},
     "plugins": [
       "expo-router",
       [
